@@ -173,6 +173,8 @@ External library support:
                            and libraw1394 [no]
   --enable-libdirac        enable Dirac support via libdirac [no]
   --enable-libfaac         enable FAAC support via libfaac [no]
+  --enable-libfaad         enable FAAD support via libfaad [no]
+  --enable-libfaadbin      open libfaad.so.0 at runtime [no]
   --enable-libfreetype     enable libfreetype [no]
   --enable-libgsm          enable GSM support via libgsm [no]
   --enable-libmodplug      enable ModPlug via libmodplug [no]
@@ -1002,6 +1004,8 @@ CONFIG_LIST="
     libdc1394
     libdirac
     libfaac
+    libfaad
+    libfaadbin
     libfreetype
     libgsm
     libmodplug
@@ -1491,6 +1495,8 @@ libcelt_decoder_deps="libcelt"
 libdirac_decoder_deps="libdirac !libschroedinger"
 libdirac_encoder_deps="libdirac"
 libfaac_encoder_deps="libfaac"
+libfaad_decoder_deps="libfaad"
+libfaadbin_extralibs='$ldl'
 libgsm_decoder_deps="libgsm"
 libgsm_encoder_deps="libgsm"
 libgsm_ms_decoder_deps="libgsm"
@@ -2686,11 +2692,27 @@ EOF
     exit 1;
 fi
 
+if enabled_any libfaad libfaadbin ; then
+    if check_header faad.h; then
+        check_cc <<EOF
+#include <faad.h>
+#ifndef FAAD2_VERSION
+ok faad1
+#endif
+int main(void) { return 0; }
+EOF
+        test $? = 0 && enable libfaad2
+    else
+        die "FAAD test failed."
+    fi
+fi
+
 die_license_disabled() {
     enabled $1 || { enabled $2 && die "$2 is $1 and --enable-$1 is not specified."; }
 }
 
 die_license_disabled gpl libcdio
+die_license_disabled gpl libfaad2
 die_license_disabled gpl libx264
 die_license_disabled gpl libxavs
 die_license_disabled gpl libxvid
@@ -3021,6 +3043,7 @@ enabled libdc1394  && require_pkg_config libdc1394-2 dc1394/dc1394.h dc1394_new
 enabled libdirac   && require_pkg_config dirac                          \
     "libdirac_decoder/dirac_parser.h libdirac_encoder/dirac_encoder.h"  \
     "dirac_decoder_init dirac_encoder_init"
+enabled libfaad    && require2 libfaad faad.h faacDecOpen -lfaad
 enabled libfaac    && require2 libfaac "stdint.h faac.h" faacEncGetVersion -lfaac
 enabled libfreetype && require_pkg_config freetype2 "ft2build.h freetype/freetype.h" FT_Init_FreeType
 enabled libgsm     && require  libgsm gsm/gsm.h gsm_create -lgsm
@@ -3351,6 +3374,8 @@ echo "libcdio support           ${libcdio-no}"
 echo "libdc1394 support         ${libdc1394-no}"
 echo "libdirac enabled          ${libdirac-no}"
 echo "libfaac enabled           ${libfaac-no}"
+echo "libfaad enabled           ${libfaad-no}"
+echo "libfaad dlopened          ${libfaadbin-no}"
 echo "libaacplus enabled        ${libaacplus-no}"
 echo "libgsm enabled            ${libgsm-no}"
 echo "libmodplug enabled        ${libmodplug-no}"
