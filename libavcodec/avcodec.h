@@ -3903,6 +3903,17 @@ int avcodec_open(AVCodecContext *avctx, AVCodec *codec);
  */
 int avcodec_open2(AVCodecContext *avctx, AVCodec *codec, AVDictionary **options);
 
+/* Decode a subtitle message. Return -1 if error, otherwise return the
+ * number of bytes used. If no subtitle could be decompressed,
+ * got_sub_ptr is zero. Otherwise, the subtitle is stored in *sub. */
+attribute_deprecated int avcodec_decode_subtitle(AVCodecContext *avctx, AVSubtitle *sub,
+                            int *got_sub_ptr,
+                            const uint8_t *buf, int buf_size);
+
+attribute_deprecated int avcodec_decode_audio2(AVCodecContext *avctx, int16_t *samples,
+                         int *frame_size_ptr,
+                         const uint8_t *buf, int buf_size);
+
 /**
  * Decode the audio frame of size avpkt->size from avpkt->data into samples.
  * Some decoders may support multiple frames in a single AVPacket, such
@@ -3945,6 +3956,23 @@ int avcodec_open2(AVCodecContext *avctx, AVCodec *codec, AVDictionary **options)
 int avcodec_decode_audio3(AVCodecContext *avctx, int16_t *samples,
                          int *frame_size_ptr,
                          AVPacket *avpkt);
+
+/**
+* Decode a video frame from buf into picture.
+* Wrapper function which calls avcodec_decode_video2.
+*
+* @deprecated Use avcodec_decode_video2 instead.
+* @param avctx the codec context
+* @param[out] picture The AVFrame in which the decoded video frame will be stored.
+* @param[in] buf the input buffer
+* @param[in] buf_size the size of the input buffer in bytes
+* @param[in,out] got_picture_ptr Zero if no frame could be decompressed, otherwise, it is nonzero.
+* @return On error a negative value is returned, otherwise the number of bytes
+* used or zero if no frame could be decompressed.
+*/
+attribute_deprecated int avcodec_decode_video(AVCodecContext *avctx, AVFrame *picture,
+                        int *got_picture_ptr,
+                        const uint8_t *buf, int buf_size);
 
 /**
  * Decode the video frame of size avpkt->size from avpkt->data into picture.
@@ -4257,6 +4285,12 @@ AVCodecParser *av_parser_next(AVCodecParser *c);
 
 void av_register_codec_parser(AVCodecParser *parser);
 AVCodecParserContext *av_parser_init(int codec_id);
+
+int av_parser_parse(AVCodecParserContext *s,
+                    AVCodecContext *avctx,
+                    uint8_t **poutbuf, int *poutbuf_size,
+                    const uint8_t *buf, int buf_size,
+                    int64_t pts, int64_t dts);
 
 /**
  * Parse a packet.

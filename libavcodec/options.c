@@ -532,6 +532,15 @@ static const AVClass av_codec_context_class = {
     .child_class_next        = codec_child_class_next,
 };
 
+const AVOption *av_set_string(void *obj, const char *name, const char *val);
+const AVOption *av_set_string(void *obj, const char *name, const char *val)
+{
+    const AVOption *o;
+    if (av_set_string3(obj, name, val, 0, &o) < 0)
+        return NULL;
+    return o;
+}
+
 void avcodec_get_context_defaults2(AVCodecContext *s, enum AVMediaType codec_type){
     int flags=0;
     memset(s, 0, sizeof(AVCodecContext));

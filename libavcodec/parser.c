@@ -105,6 +105,15 @@ void ff_fetch_timestamp(AVCodecParserContext *s, int off, int remove){
     }
 }
 
+int av_parser_parse(AVCodecParserContext *s,
+                    AVCodecContext *avctx,
+                    uint8_t **poutbuf, int *poutbuf_size,
+                    const uint8_t *buf, int buf_size,
+                    int64_t pts, int64_t dts)
+{
+    return av_parser_parse2(s, avctx, poutbuf, poutbuf_size, buf, buf_size, pts, dts, AV_NOPTS_VALUE);
+}
+
 int av_parser_parse2(AVCodecParserContext *s,
                      AVCodecContext *avctx,
                      uint8_t **poutbuf, int *poutbuf_size,
