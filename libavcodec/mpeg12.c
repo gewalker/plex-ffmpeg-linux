@@ -936,10 +936,6 @@ static int mpeg_decode_mb(MpegEncContext *s, DCTELEM block[12][64])
                 }
                 break;
             case MT_FIELD:
-                if(s->progressive_sequence){
-                    av_log(s->avctx, AV_LOG_ERROR, "MT_FIELD in progressive_sequence\n");
-                    return -1;
-                }
                 s->mv_type = MV_TYPE_FIELD;
                 if (s->picture_structure == PICT_FRAME) {
                     mb_type |= MB_TYPE_16x8 | MB_TYPE_INTERLACED;
@@ -961,6 +957,7 @@ static int mpeg_decode_mb(MpegEncContext *s, DCTELEM block[12][64])
                         }
                     }
                 } else {
+                    av_assert0(!s->progressive_sequence);
                     mb_type |= MB_TYPE_16x16 | MB_TYPE_INTERLACED;
                     for (i = 0; i < 2; i++) {
                         if (USES_LIST(mb_type, i)) {
@@ -2346,7 +2343,8 @@ static int decode_chunks(AVCodecContext *avctx,
         case SEQ_START_CODE:
             if (last_code == 0) {
                 mpeg1_decode_sequence(avctx, buf_ptr, input_size);
-                s->sync=1;
+                if(buf != avctx->extradata)
+                    s->sync=1;
             } else {
                 av_log(avctx, AV_LOG_ERROR, "ignoring SEQ_START_CODE after %X\n", last_code);
                 if (avctx->error_recognition >= FF_ER_EXPLODE)
