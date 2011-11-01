@@ -49,6 +49,7 @@ static const AVOption options[]={
 {"ocl",  "output channel layout", OFFSET(out_ch_layout), AV_OPT_TYPE_INT64, {.dbl=0}, 0, INT64_MAX, 0, "channel_layout"},
 {"clev", "center mix level"     , OFFSET(clev)         , AV_OPT_TYPE_FLOAT, {.dbl=C_30DB}, 0, 4, 0},
 {"slev", "sourround mix level"  , OFFSET(slev)         , AV_OPT_TYPE_FLOAT, {.dbl=C_30DB}, 0, 4, 0},
+{"rmvol", "rematrix volume"     , OFFSET(rematrix_volume), AV_OPT_TYPE_FLOAT, {.dbl=1.0}, -1000, 1000, 0},
 {"flags", NULL                  , OFFSET(flags)        , AV_OPT_TYPE_FLAGS, {.dbl=0}, 0,  UINT_MAX, 0, "flags"},
 {"res", "force resampling", 0, AV_OPT_TYPE_CONST, {.dbl=SWR_FLAG_RESAMPLE}, INT_MIN, INT_MAX, 0, "flags"},
 
@@ -176,7 +177,7 @@ int swr_init(SwrContext *s){
     if(!s->out_ch_layout)
         s->out_ch_layout= av_get_default_channel_layout(s->out.ch_count);
 
-    s->rematrix= s->out_ch_layout  !=s->in_ch_layout;
+    s->rematrix= s->out_ch_layout  !=s->in_ch_layout || s->rematrix_volume!=1.0;
 
 #define RSC 1 //FIXME finetune
     if(!s-> in.ch_count)
@@ -279,7 +280,7 @@ static void fill_audiodata(AudioData *out, uint8_t *in_arg [SWR_CH_MAX]){
 int swr_convert(struct SwrContext *s, uint8_t *out_arg[SWR_CH_MAX], int out_count,
                          const uint8_t *in_arg [SWR_CH_MAX], int  in_count){
     AudioData *postin, *midbuf, *preout;
-    int ret, i/*, in_max*/;
+    int ret/*, in_max*/;
     AudioData * in= &s->in;
     AudioData *out= &s->out;
     AudioData preout_tmp, midbuf_tmp;
@@ -290,7 +291,7 @@ int swr_convert(struct SwrContext *s, uint8_t *out_arg[SWR_CH_MAX], int out_coun
         out_count = in_count;
     }
 
-    fill_audiodata(in ,  in_arg);
+    fill_audiodata(in ,  (void*)in_arg);
     fill_audiodata(out, out_arg);
 
     if(s->full_convert){

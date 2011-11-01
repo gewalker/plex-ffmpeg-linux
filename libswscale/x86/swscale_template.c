@@ -20,6 +20,7 @@
 
 #undef REAL_MOVNTQ
 #undef MOVNTQ
+#undef MOVNTQ2
 #undef PREFETCH
 
 #if COMPILE_TEMPLATE_MMX2
@@ -30,49 +31,16 @@
 
 #if COMPILE_TEMPLATE_MMX2
 #define REAL_MOVNTQ(a,b) "movntq " #a ", " #b " \n\t"
+#define MOVNTQ2 "movntq "
 #else
 #define REAL_MOVNTQ(a,b) "movq " #a ", " #b " \n\t"
+#define MOVNTQ2 "movq "
 #endif
 #define MOVNTQ(a,b)  REAL_MOVNTQ(a,b)
 
-#define YSCALEYUV2YV12X(offset, dest, end, pos) \
-    __asm__ volatile(\
-        "movq                  "DITHER16"+0(%0), %%mm3      \n\t"\
-        "movq                  "DITHER16"+8(%0), %%mm4      \n\t"\
-        "lea                     " offset "(%0), %%"REG_d"  \n\t"\
-        "mov                        (%%"REG_d"), %%"REG_S"  \n\t"\
-        ".p2align                             4             \n\t" /* FIXME Unroll? */\
-        "1:                                                 \n\t"\
-        "movq                      8(%%"REG_d"), %%mm0      \n\t" /* filterCoeff */\
-        "movq                (%%"REG_S", %3, 2), %%mm2      \n\t" /* srcData */\
-        "movq               8(%%"REG_S", %3, 2), %%mm5      \n\t" /* srcData */\
-        "add                                $16, %%"REG_d"  \n\t"\
-        "mov                        (%%"REG_d"), %%"REG_S"  \n\t"\
-        "test                         %%"REG_S", %%"REG_S"  \n\t"\
-        "pmulhw                           %%mm0, %%mm2      \n\t"\
-        "pmulhw                           %%mm0, %%mm5      \n\t"\
-        "paddw                            %%mm2, %%mm3      \n\t"\
-        "paddw                            %%mm5, %%mm4      \n\t"\
-        " jnz                                1b             \n\t"\
-        "psraw                               $3, %%mm3      \n\t"\
-        "psraw                               $3, %%mm4      \n\t"\
-        "packuswb                         %%mm4, %%mm3      \n\t"\
-        MOVNTQ(%%mm3, (%1, %3))\
-        "add                                 $8, %3         \n\t"\
-        "cmp                                 %2, %3         \n\t"\
-        "movq                  "DITHER16"+0(%0), %%mm3      \n\t"\
-        "movq                  "DITHER16"+8(%0), %%mm4      \n\t"\
-        "lea                     " offset "(%0), %%"REG_d"  \n\t"\
-        "mov                        (%%"REG_d"), %%"REG_S"  \n\t"\
-        "jb                                  1b             \n\t"\
-        :: "r" (&c->redDither),\
-           "r" (dest), "g" ((x86_reg)(end)), "r"((x86_reg)(pos))\
-        : "%"REG_d, "%"REG_S\
-    );
-
 #if !COMPILE_TEMPLATE_MMX2
 static av_always_inline void
-dither_8to16(SwsContext *c, const uint8_t *srcDither, int rot)
+dither_8to16(const uint8_t *srcDither, int rot)
 {
     if (rot) {
         __asm__ volatile("pxor      %%mm0, %%mm0\n\t"
@@ -84,11 +52,7 @@ dither_8to16(SwsContext *c, const uint8_t *srcDither, int rot)
                          "movq      %%mm3, %%mm4\n\t"
                          "punpcklbw %%mm0, %%mm3\n\t"
                          "punpckhbw %%mm0, %%mm4\n\t"
-                         "psraw        $4, %%mm3\n\t"
-                         "psraw        $4, %%mm4\n\t"
-                         "movq      %%mm3, "DITHER16"+0(%1)\n\t"
-                         "movq      %%mm4, "DITHER16"+8(%1)\n\t"
-                         :: "r"(srcDither), "r"(&c->redDither)
+                         :: "r"(srcDither)
                          );
     } else {
         __asm__ volatile("pxor      %%mm0, %%mm0\n\t"
@@ -96,253 +60,76 @@ dither_8to16(SwsContext *c, const uint8_t *srcDither, int rot)
                          "movq      %%mm3, %%mm4\n\t"
                          "punpcklbw %%mm0, %%mm3\n\t"
                          "punpckhbw %%mm0, %%mm4\n\t"
-                         "psraw        $4, %%mm3\n\t"
-                         "psraw        $4, %%mm4\n\t"
-                         "movq      %%mm3, "DITHER16"+0(%1)\n\t"
-                         "movq      %%mm4, "DITHER16"+8(%1)\n\t"
-                         :: "r"(srcDither), "r"(&c->redDither)
+                         :: "r"(srcDither)
                          );
     }
 }
 #endif
 
-static void RENAME(yuv2yuvX)(SwsContext *c, const int16_t *lumFilter,
-                             const int16_t **lumSrc, int lumFilterSize,
-                             const int16_t *chrFilter, const int16_t **chrUSrc,
-                             const int16_t **chrVSrc,
-                             int chrFilterSize, const int16_t **alpSrc,
-                             uint8_t *dest[4], int dstW, int chrDstW)
+static void RENAME(yuv2yuvX)(const int16_t *filter, int filterSize,
+                           const int16_t **src, uint8_t *dest, int dstW,
+                           const uint8_t *dither, int offset)
 {
-    uint8_t *yDest = dest[0], *uDest = dest[1], *vDest = dest[2],
-            *aDest = CONFIG_SWSCALE_ALPHA ? dest[3] : NULL;
-    const uint8_t *lumDither = c->lumDither8, *chrDither = c->chrDither8;
-
-    if (uDest) {
-        x86_reg uv_off = c->uv_offx2 >> 1;
-        dither_8to16(c, chrDither, 0);
-        YSCALEYUV2YV12X(CHR_MMX_FILTER_OFFSET, uDest, chrDstW, 0)
-        dither_8to16(c, chrDither, 1);
-        YSCALEYUV2YV12X(CHR_MMX_FILTER_OFFSET, vDest - uv_off, chrDstW + uv_off, uv_off)
-    }
-    dither_8to16(c, lumDither, 0);
-    if (CONFIG_SWSCALE_ALPHA && aDest) {
-        YSCALEYUV2YV12X(ALP_MMX_FILTER_OFFSET, aDest, dstW, 0)
-    }
-
-    YSCALEYUV2YV12X(LUM_MMX_FILTER_OFFSET, yDest, dstW, 0)
-}
-
-#define YSCALEYUV2YV12X_ACCURATE(offset, dest, end, pos) \
+    dither_8to16(dither, offset);
     __asm__ volatile(\
-        "lea                     " offset "(%0), %%"REG_d"  \n\t"\
-        "movq                  "DITHER32"+0(%0), %%mm4      \n\t"\
-        "movq                  "DITHER32"+8(%0), %%mm5      \n\t"\
-        "movq                 "DITHER32"+16(%0), %%mm6      \n\t"\
-        "movq                 "DITHER32"+24(%0), %%mm7      \n\t"\
+        "psraw        $4, %%mm3\n\t"
+        "psraw        $4, %%mm4\n\t"
+        "movq    %%mm3, %%mm6\n\t"
+        "movq    %%mm4, %%mm7\n\t"
+        "movl %3, %%ecx\n\t"
+        "mov                                 %0, %%"REG_d"  \n\t"\
         "mov                        (%%"REG_d"), %%"REG_S"  \n\t"\
-        ".p2align                             4             \n\t"\
+        ".p2align                             4             \n\t" /* FIXME Unroll? */\
         "1:                                                 \n\t"\
-        "movq                (%%"REG_S", %3, 2), %%mm0      \n\t" /* srcData */\
-        "movq               8(%%"REG_S", %3, 2), %%mm2      \n\t" /* srcData */\
-        "mov        "STR(APCK_PTR2)"(%%"REG_d"), %%"REG_S"  \n\t"\
-        "movq                (%%"REG_S", %3, 2), %%mm1      \n\t" /* srcData */\
-        "movq                             %%mm0, %%mm3      \n\t"\
-        "punpcklwd                        %%mm1, %%mm0      \n\t"\
-        "punpckhwd                        %%mm1, %%mm3      \n\t"\
-        "movq       "STR(APCK_COEF)"(%%"REG_d"), %%mm1      \n\t" /* filterCoeff */\
-        "pmaddwd                          %%mm1, %%mm0      \n\t"\
-        "pmaddwd                          %%mm1, %%mm3      \n\t"\
-        "paddd                            %%mm0, %%mm4      \n\t"\
-        "paddd                            %%mm3, %%mm5      \n\t"\
-        "movq               8(%%"REG_S", %3, 2), %%mm3      \n\t" /* srcData */\
-        "mov        "STR(APCK_SIZE)"(%%"REG_d"), %%"REG_S"  \n\t"\
-        "add                  $"STR(APCK_SIZE)", %%"REG_d"  \n\t"\
+        "movq                      8(%%"REG_d"), %%mm0      \n\t" /* filterCoeff */\
+        "movq                (%%"REG_S", %%"REG_c", 2), %%mm2      \n\t" /* srcData */\
+        "movq               8(%%"REG_S", %%"REG_c", 2), %%mm5      \n\t" /* srcData */\
+        "add                                $16, %%"REG_d"  \n\t"\
+        "mov                        (%%"REG_d"), %%"REG_S"  \n\t"\
         "test                         %%"REG_S", %%"REG_S"  \n\t"\
-        "movq                             %%mm2, %%mm0      \n\t"\
-        "punpcklwd                        %%mm3, %%mm2      \n\t"\
-        "punpckhwd                        %%mm3, %%mm0      \n\t"\
-        "pmaddwd                          %%mm1, %%mm2      \n\t"\
-        "pmaddwd                          %%mm1, %%mm0      \n\t"\
-        "paddd                            %%mm2, %%mm6      \n\t"\
-        "paddd                            %%mm0, %%mm7      \n\t"\
+        "pmulhw                           %%mm0, %%mm2      \n\t"\
+        "pmulhw                           %%mm0, %%mm5      \n\t"\
+        "paddw                            %%mm2, %%mm3      \n\t"\
+        "paddw                            %%mm5, %%mm4      \n\t"\
         " jnz                                1b             \n\t"\
-        "psrad                              $19, %%mm4      \n\t"\
-        "psrad                              $19, %%mm5      \n\t"\
-        "psrad                              $19, %%mm6      \n\t"\
-        "psrad                              $19, %%mm7      \n\t"\
-        "packssdw                         %%mm5, %%mm4      \n\t"\
-        "packssdw                         %%mm7, %%mm6      \n\t"\
-        "packuswb                         %%mm6, %%mm4      \n\t"\
-        MOVNTQ(%%mm4, (%1, %3))\
-        "add                                 $8, %3         \n\t"\
-        "cmp                                 %2, %3         \n\t"\
-        "lea                     " offset "(%0), %%"REG_d"  \n\t"\
-        "movq                  "DITHER32"+0(%0), %%mm4      \n\t"\
-        "movq                  "DITHER32"+8(%0), %%mm5      \n\t"\
-        "movq                 "DITHER32"+16(%0), %%mm6      \n\t"\
-        "movq                 "DITHER32"+24(%0), %%mm7      \n\t"\
+        "psraw                               $3, %%mm3      \n\t"\
+        "psraw                               $3, %%mm4      \n\t"\
+        "packuswb                         %%mm4, %%mm3      \n\t"
+        MOVNTQ2 "                         %%mm3, (%1, %%"REG_c")\n\t"
+        "add                          $8, %%"REG_c"         \n\t"\
+        "cmp                          %2, %%"REG_c"         \n\t"\
+        "movq    %%mm6, %%mm3\n\t"
+        "movq    %%mm7, %%mm4\n\t"
+        "mov                                 %0, %%"REG_d"  \n\t"\
         "mov                        (%%"REG_d"), %%"REG_S"  \n\t"\
         "jb                                  1b             \n\t"\
-        :: "r" (&c->redDither),\
-        "r" (dest), "g" ((x86_reg)(end)), "r"((x86_reg)(pos))\
-        : "%"REG_a, "%"REG_d, "%"REG_S\
+        :: "g" (filter),
+           "r" (dest-offset), "g" ((x86_reg)(dstW+offset)), "m" (offset)
+        : "%"REG_d, "%"REG_S, "%"REG_c
     );
-
-#if !COMPILE_TEMPLATE_MMX2
-static av_always_inline void
-dither_8to32(SwsContext *c, const uint8_t *srcDither, int rot)
-{
-    if (rot) {
-        __asm__ volatile("pxor      %%mm0, %%mm0\n\t"
-                         "movq       (%0), %%mm4\n\t"
-                         "movq      %%mm4, %%mm5\n\t"
-                         "psrlq       $24, %%mm4\n\t"
-                         "psllq       $40, %%mm5\n\t"
-                         "por       %%mm5, %%mm4\n\t"
-                         "movq      %%mm4, %%mm6\n\t"
-                         "punpcklbw %%mm0, %%mm4\n\t"
-                         "punpckhbw %%mm0, %%mm6\n\t"
-                         "movq      %%mm4, %%mm5\n\t"
-                         "movq      %%mm6, %%mm7\n\t"
-                         "punpcklwd %%mm0, %%mm4\n\t"
-                         "punpckhwd %%mm0, %%mm5\n\t"
-                         "punpcklwd %%mm0, %%mm6\n\t"
-                         "punpckhwd %%mm0, %%mm7\n\t"
-                         "pslld       $12, %%mm4\n\t"
-                         "pslld       $12, %%mm5\n\t"
-                         "pslld       $12, %%mm6\n\t"
-                         "pslld       $12, %%mm7\n\t"
-                         "movq      %%mm4, "DITHER32"+0(%1)\n\t"
-                         "movq      %%mm5, "DITHER32"+8(%1)\n\t"
-                         "movq      %%mm6, "DITHER32"+16(%1)\n\t"
-                         "movq      %%mm7, "DITHER32"+24(%1)\n\t"
-                         :: "r"(srcDither), "r"(&c->redDither)
-                         );
-    } else {
-        __asm__ volatile("pxor      %%mm0, %%mm0\n\t"
-                         "movq       (%0), %%mm4\n\t"
-                         "movq      %%mm4, %%mm6\n\t"
-                         "punpcklbw %%mm0, %%mm4\n\t"
-                         "punpckhbw %%mm0, %%mm6\n\t"
-                         "movq      %%mm4, %%mm5\n\t"
-                         "movq      %%mm6, %%mm7\n\t"
-                         "punpcklwd %%mm0, %%mm4\n\t"
-                         "punpckhwd %%mm0, %%mm5\n\t"
-                         "punpcklwd %%mm0, %%mm6\n\t"
-                         "punpckhwd %%mm0, %%mm7\n\t"
-                         "pslld       $12, %%mm4\n\t"
-                         "pslld       $12, %%mm5\n\t"
-                         "pslld       $12, %%mm6\n\t"
-                         "pslld       $12, %%mm7\n\t"
-                         "movq      %%mm4, "DITHER32"+0(%1)\n\t"
-                         "movq      %%mm5, "DITHER32"+8(%1)\n\t"
-                         "movq      %%mm6, "DITHER32"+16(%1)\n\t"
-                         "movq      %%mm7, "DITHER32"+24(%1)\n\t"
-                         :: "r"(srcDither), "r"(&c->redDither)
-                         );
-    }
-}
-#endif
-
-static void RENAME(yuv2yuvX_ar)(SwsContext *c, const int16_t *lumFilter,
-                                const int16_t **lumSrc, int lumFilterSize,
-                                const int16_t *chrFilter, const int16_t **chrUSrc,
-                                const int16_t **chrVSrc,
-                                int chrFilterSize, const int16_t **alpSrc,
-                                uint8_t *dest[4], int dstW, int chrDstW)
-{
-    uint8_t *yDest = dest[0], *uDest = dest[1], *vDest = dest[2],
-            *aDest = CONFIG_SWSCALE_ALPHA ? dest[3] : NULL;
-    const uint8_t *lumDither = c->lumDither8, *chrDither = c->chrDither8;
-
-    if (uDest) {
-        x86_reg uv_off = c->uv_offx2 >> 1;
-        dither_8to32(c, chrDither, 0);
-        YSCALEYUV2YV12X_ACCURATE(CHR_MMX_FILTER_OFFSET, uDest, chrDstW, 0)
-        dither_8to32(c, chrDither, 1);
-        YSCALEYUV2YV12X_ACCURATE(CHR_MMX_FILTER_OFFSET, vDest - uv_off, chrDstW + uv_off, uv_off)
-    }
-    dither_8to32(c, lumDither, 0);
-    if (CONFIG_SWSCALE_ALPHA && aDest) {
-        YSCALEYUV2YV12X_ACCURATE(ALP_MMX_FILTER_OFFSET, aDest, dstW, 0)
-    }
-
-    YSCALEYUV2YV12X_ACCURATE(LUM_MMX_FILTER_OFFSET, yDest, dstW, 0)
 }
 
-static void RENAME(yuv2yuv1)(SwsContext *c, const int16_t *lumSrc,
-                             const int16_t *chrUSrc, const int16_t *chrVSrc,
-                             const int16_t *alpSrc,
-                             uint8_t *dst[4], int dstW, int chrDstW)
+static void RENAME(yuv2yuv1_ar)(const int16_t *src, uint8_t *dst, int dstW, const uint8_t *dither, int offset)
 {
-    int p= 4;
-    const int16_t *src[4]= {
-        lumSrc + dstW,     chrUSrc + chrDstW,
-        chrVSrc + chrDstW, alpSrc + dstW
-    };
-    x86_reg counter[4]= { dstW, chrDstW, chrDstW, dstW };
-
-    while (p--) {
-        if (dst[p]) {
-            __asm__ volatile(
-                "mov %2, %%"REG_a"                    \n\t"
-                ".p2align               4             \n\t" /* FIXME Unroll? */
-                "1:                                   \n\t"
-                "movq  (%0, %%"REG_a", 2), %%mm0      \n\t"
-                "movq 8(%0, %%"REG_a", 2), %%mm1      \n\t"
-                "psraw                 $7, %%mm0      \n\t"
-                "psraw                 $7, %%mm1      \n\t"
-                "packuswb           %%mm1, %%mm0      \n\t"
-                MOVNTQ(%%mm0, (%1, %%REGa))
-                "add                   $8, %%"REG_a"  \n\t"
-                "jnc                   1b             \n\t"
-                :: "r" (src[p]), "r" (dst[p] + counter[p]),
-                   "g" (-counter[p])
-                : "%"REG_a
-            );
-        }
-    }
-}
-
-static void RENAME(yuv2yuv1_ar)(SwsContext *c, const int16_t *lumSrc,
-                                const int16_t *chrUSrc, const int16_t *chrVSrc,
-                                const int16_t *alpSrc,
-                                uint8_t *dst[4], int dstW, int chrDstW)
-{
-    int p= 4;
-    const int16_t *src[4]= {
-        lumSrc + dstW,     chrUSrc + chrDstW,
-        chrVSrc + chrDstW, alpSrc + dstW
-    };
-    x86_reg counter[4]= { dstW, chrDstW, chrDstW, dstW };
-    const uint8_t *lumDither = c->lumDither8, *chrDither = c->chrDither8;
-
-    while (p--) {
-        if (dst[p]) {
-            int i;
-            for(i=0; i<8; i++) c->dither16[i] = (p == 2 || p == 3) ? lumDither[i] : chrDither[i];
-            __asm__ volatile(
-                "mov %2, %%"REG_a"                    \n\t"
-                "movq    "DITHER16"+0(%3), %%mm6      \n\t"
-                "movq    "DITHER16"+8(%3), %%mm7      \n\t"
-                ".p2align                4            \n\t" /* FIXME Unroll? */
-                "1:                                   \n\t"
-                "movq  (%0, %%"REG_a", 2), %%mm0      \n\t"
-                "movq 8(%0, %%"REG_a", 2), %%mm1      \n\t"
-                "paddsw             %%mm6, %%mm0      \n\t"
-                "paddsw             %%mm7, %%mm1      \n\t"
-                "psraw                 $7, %%mm0      \n\t"
-                "psraw                 $7, %%mm1      \n\t"
-                "packuswb           %%mm1, %%mm0      \n\t"
-                MOVNTQ(%%mm0, (%1, %%REGa))
-                "add                   $8, %%"REG_a"  \n\t"
-                "jnc                   1b             \n\t"
-                :: "r" (src[p]), "r" (dst[p] + counter[p]),
-                   "g" (-counter[p]), "r"(&c->redDither)
-                : "%"REG_a
-            );
-        }
-    }
+    dither_8to16(dither, offset);
+    __asm__ volatile(
+        "mov %2, %%"REG_a"                    \n\t"
+        ".p2align                4            \n\t" /* FIXME Unroll? */
+        "1:                                   \n\t"
+        "movq  (%0, %%"REG_a", 2), %%mm0      \n\t"
+        "movq 8(%0, %%"REG_a", 2), %%mm1      \n\t"
+        "paddsw             %%mm3, %%mm0      \n\t"
+        "paddsw             %%mm4, %%mm1      \n\t"
+        "psraw                 $7, %%mm0      \n\t"
+        "psraw                 $7, %%mm1      \n\t"
+        "packuswb           %%mm1, %%mm0      \n\t"
+        MOVNTQ(%%mm0, (%1, %%REGa))
+        "add                   $8, %%"REG_a"  \n\t"
+        "jnc                   1b             \n\t"
+        :: "r" (src + dstW), "r" (dst + dstW),
+           "g" ((x86_reg)-dstW)
+        : "%"REG_a
+    );
 }
 
 #define YSCALEYUV2PACKEDX_UV \
@@ -2091,12 +1878,12 @@ static av_cold void RENAME(sws_init_swScale)(SwsContext *c)
 {
     enum PixelFormat srcFormat = c->srcFormat,
                      dstFormat = c->dstFormat;
-
+    c->use_mmx_vfilter= 0;
     if (!is16BPS(dstFormat) && !is9_OR_10BPS(dstFormat) && dstFormat != PIX_FMT_NV12
         && dstFormat != PIX_FMT_NV21 && !(c->flags & SWS_BITEXACT)) {
+            c->yuv2plane1 = RENAME(yuv2yuv1_ar    );
             if (c->flags & SWS_ACCURATE_RND) {
-                c->yuv2yuv1 = RENAME(yuv2yuv1_ar    );
-                c->yuv2yuvX = RENAME(yuv2yuvX_ar    );
+                //c->yuv2yuv1 = RENAME(yuv2yuv1_ar    );
                 if (!(c->flags & SWS_FULL_CHR_H_INT)) {
                     switch (c->dstFormat) {
                     case PIX_FMT_RGB32:   c->yuv2packedX = RENAME(yuv2rgb32_X_ar);   break;
@@ -2109,8 +1896,9 @@ static av_cold void RENAME(sws_init_swScale)(SwsContext *c)
                 }
             } else {
                 int should_dither= isNBPS(c->srcFormat) || is16BPS(c->srcFormat);
-                c->yuv2yuv1 = should_dither ? RENAME(yuv2yuv1_ar    ) : RENAME(yuv2yuv1    );
-                c->yuv2yuvX = RENAME(yuv2yuvX    );
+                //c->yuv2plane1 = should_dither ? RENAME(yuv2yuv1_ar    ) : RENAME(yuv2yuv1    );
+                c->use_mmx_vfilter= 1;
+                c->yuv2planeX = RENAME(yuv2yuvX    );
                 if (!(c->flags & SWS_FULL_CHR_H_INT)) {
                     switch (c->dstFormat) {
                     case PIX_FMT_RGB32:   c->yuv2packedX = RENAME(yuv2rgb32_X);   break;

@@ -873,7 +873,7 @@ A preset file contains a sequence of @var{option}=@var{value} pairs,
 one for each line, specifying a sequence of options which would be
 awkward to specify on the command line. Lines starting with the hash
 ('#') character are ignored and are used to provide comments. Check
-the @file{ffpresets} directory in the FFmpeg source tree for examples.
+the @file{presets} directory in the FFmpeg source tree for examples.
 
 Preset files are specified with the @code{vpre}, @code{apre},
 @code{spre}, and @code{fpre} options. The @code{fpre} option takes the
@@ -953,6 +953,11 @@ and audio directly.
 
 @example
 ffmpeg -f oss -i /dev/dsp -f video4linux2 -i /dev/video0 /tmp/out.mpg
+@end example
+
+Or with an ALSA audio source (mono input, card id 1) instead of OSS:
+@example
+ffmpeg -f alsa -ac 1 -i hw:1 -f video4linux2 -i /dev/video0 /tmp/out.mpg
 @end example
 
 Note that you must activate the right video source and channel before

@@ -98,7 +98,7 @@ static int grab_read_header(AVFormatContext *s1, AVFormatParameters *ap)
     s->video_win.width = ap->width;
     s->video_win.height = ap->height;
 
-    st = av_new_stream(s1, 0);
+    st = avformat_new_stream(s1, NULL);
     if (!st)
         return AVERROR(ENOMEM);
     av_set_pts_info(st, 64, 1, 1000000); /* 64 bits pts in us */
@@ -354,7 +354,7 @@ static const AVClass v4l_class = {
 };
 
 AVInputFormat ff_v4l_demuxer = {
-    .name           = "video4linux",
+    .name           = "video4linux,v4l",
     .long_name      = NULL_IF_CONFIG_SMALL("Video4Linux device grab"),
     .priv_data_size = sizeof(VideoData),
     .read_header    = grab_read_header,
