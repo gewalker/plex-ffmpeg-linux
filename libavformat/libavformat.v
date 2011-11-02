@@ -19,6 +19,7 @@ LIBAVFORMAT_$MAJOR {
                 parse_date;
                 dump_format;
                 url_*;
+                ff_read_frame_flush;
                 ff_timefilter_destroy;
                 ff_timefilter_new;
                 ff_timefilter_update;
