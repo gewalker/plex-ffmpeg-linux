@@ -14,6 +14,6 @@ gcc -bundle -flat_namespace -undefined suppress -read_only_relocs suppress -o ..
 /usr/bin/ruby ../../../../../tools/Mach5/wrapper.rb ../../../../../system/players/dvdplayer/postproc-51-x86-osx.so;mv output.so ../../../../../system/players/dvdplayer/postproc-51-x86-osx.so
 chmod +x ../../../../../system/players/dvdplayer/postproc-51-x86-osx.so
 
-gcc -bundle -flat_namespace -undefined suppress -read_only_relocs suppress -o ../../../../../system/players/dvdplayer/swscale-0.6.1-x86-osx.so libswscale/*.o -fPIC -rdynamic -arch i386
+gcc -bundle -flat_namespace -undefined suppress -read_only_relocs suppress -o ../../../../../system/players/dvdplayer/swscale-0.6.1-x86-osx.so libswscale/*.o libswscale/x86/*.o -fPIC -rdynamic -arch i386
 /usr/bin/ruby ../../../../../tools/Mach5/wrapper.rb ../../../../../system/players/dvdplayer/swscale-0.6.1-x86-osx.so;mv output.so ../../../../../system/players/dvdplayer/swscale-0.6.1-x86-osx.so
 chmod +x ../../../../../system/players/dvdplayer/swscale-0.6.1-x86-osx.so
