@@ -49,6 +49,7 @@
 #include "libavutil/mathematics.h"
 #include "libavcodec/bytestream.h"
 #include "avformat.h"
+#include "internal.h"
 #include "mxf.h"
 
 typedef enum {
@@ -852,11 +853,12 @@ static int mxf_parse_structural_metadata(MXFContext *mxf)
         if (!source_track)
             continue;
 
-        st = av_new_stream(mxf->fc, source_track->track_id);
+        st = avformat_new_stream(mxf->fc, NULL);
         if (!st) {
             av_log(mxf->fc, AV_LOG_ERROR, "could not allocate stream\n");
             return -1;
         }
+        st->id = source_track->track_id;
         st->priv_data = source_track;
         st->duration = component->duration;
         if (st->duration == -1)
@@ -1140,7 +1142,7 @@ static int mxf_read_seek(AVFormatContext *s, int stream_index, int64_t sample_ti
     seconds = av_rescale(sample_time, st->time_base.num, st->time_base.den);
     if (avio_seek(s->pb, (s->bit_rate * seconds) >> 3, SEEK_SET) < 0)
         return -1;
-    av_update_cur_dts(s, st, sample_time);
+    ff_update_cur_dts(s, st, sample_time);
     return 0;
 }
 

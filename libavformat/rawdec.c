@@ -33,7 +33,7 @@ int ff_raw_read_header(AVFormatContext *s, AVFormatParameters *ap)
     AVStream *st;
     enum CodecID id;
 
-    st = av_new_stream(s, 0);
+    st = avformat_new_stream(s, NULL);
     if (!st)
         return AVERROR(ENOMEM);
 
@@ -56,6 +56,12 @@ int ff_raw_read_header(AVFormatContext *s, AVFormatParameters *ap)
 
             if (s1 && s1->sample_rate)
                 st->codec->sample_rate = s1->sample_rate;
+            if (st->codec->sample_rate <= 0) {
+                av_log(s, AV_LOG_ERROR, "Invalid sample rate %d specified\n",
+                       st->codec->sample_rate);
+                return AVERROR(EINVAL);
+            }
+
             if (s1 && s1->channels)
                 st->codec->channels    = s1->channels;
 
@@ -122,7 +128,7 @@ int ff_raw_read_partial_packet(AVFormatContext *s, AVPacket *pkt)
 int ff_raw_audio_read_header(AVFormatContext *s,
                              AVFormatParameters *ap)
 {
-    AVStream *st = av_new_stream(s, 0);
+    AVStream *st = avformat_new_stream(s, NULL);
     if (!st)
         return AVERROR(ENOMEM);
     st->codec->codec_type = AVMEDIA_TYPE_AUDIO;
@@ -144,7 +150,7 @@ int ff_raw_video_read_header(AVFormatContext *s,
     int ret = 0;
 
 
-    st = av_new_stream(s, 0);
+    st = avformat_new_stream(s, NULL);
     if (!st) {
         ret = AVERROR(ENOMEM);
         goto fail;

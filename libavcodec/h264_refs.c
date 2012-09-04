@@ -654,7 +654,13 @@ int ff_h264_execute_ref_pic_marking(H264Context *h, MMCO *mmco, int mmco_count){
 
     print_short_term(h);
     print_long_term(h);
-    return h->s.avctx->error_recognition >= FF_ER_EXPLODE ? err : 0;
+
+    if(err >= 0 && h->long_ref_count==0 && h->short_ref_count<=2 && h->pps.ref_count[0]<=1 && s->current_picture_ptr->f.pict_type == AV_PICTURE_TYPE_I){
+        h->sync |= 1;
+        s->current_picture_ptr->sync |= h->sync;
+    }
+
+    return (h->s.avctx->err_recognition & AV_EF_EXPLODE) ? err : 0;
 }
 
 int ff_h264_decode_ref_pic_marking(H264Context *h, GetBitContext *gb){

@@ -60,9 +60,12 @@ typedef struct FLVContext {
     int64_t duration_offset;
     int64_t filesize_offset;
     int64_t duration;
-    int delay; ///< first dts delay for AVC
-    int64_t last_video_ts;
 } FLVContext;
+
+typedef struct FLVStreamContext {
+    int     delay;      ///< first dts delay for each stream (needed for AVC & Speex)
+    int64_t last_ts;    ///< last timestamp for each stream
+} FLVStreamContext;
 
 static int get_audio_flags(AVCodecContext *enc){
     int flags = (enc->bits_per_coded_sample == 16) ? FLV_SAMPLESSIZE_16BIT : FLV_SAMPLESSIZE_8BIT;
@@ -77,11 +80,6 @@ static int get_audio_flags(AVCodecContext *enc){
         if (enc->channels != 1) {
             av_log(enc, AV_LOG_ERROR, "flv only supports mono Speex audio\n");
             return -1;
-        }
-        if (enc->frame_size / 320 > 8) {
-            av_log(enc, AV_LOG_WARNING, "Warning: Speex stream has more than "
-                                        "8 frames per packet. Adobe Flash "
-                                        "Player cannot handle this!\n");
         }
         return FLV_CODECID_SPEEX | FLV_SAMPLERATE_11025HZ | FLV_SAMPLESSIZE_16BIT;
     } else {
@@ -187,6 +185,7 @@ static int flv_write_header(AVFormatContext *s)
 
     for(i=0; i<s->nb_streams; i++){
         AVCodecContext *enc = s->streams[i]->codec;
+        FLVStreamContext *sc;
         if (enc->codec_type == AVMEDIA_TYPE_VIDEO) {
             if (s->streams[i]->r_frame_rate.den && s->streams[i]->r_frame_rate.num) {
                 framerate = av_q2d(s->streams[i]->r_frame_rate);
@@ -204,6 +203,12 @@ static int flv_write_header(AVFormatContext *s)
                 return -1;
         }
         av_set_pts_info(s->streams[i], 32, 1, 1000); /* 32 bit pts in ms */
+
+        sc = av_mallocz(sizeof(FLVStreamContext));
+        if (!sc)
+            return AVERROR(ENOMEM);
+        s->streams[i]->priv_data = sc;
+        sc->last_ts = -1;
     }
     avio_write(pb, "FLV", 3);
     avio_w8(pb,1);
@@ -222,8 +227,6 @@ static int flv_write_header(AVFormatContext *s)
             flv->reserved=5;
         }
     }
-
-    flv->last_video_ts = -1;
 
     /* write meta_tag */
     avio_w8(pb, 18);         // tag type META
@@ -366,9 +369,10 @@ static int flv_write_trailer(AVFormatContext *s)
     /* Add EOS tag */
     for (i = 0; i < s->nb_streams; i++) {
         AVCodecContext *enc = s->streams[i]->codec;
+        FLVStreamContext *sc = s->streams[i]->priv_data;
         if (enc->codec_type == AVMEDIA_TYPE_VIDEO &&
                 (enc->codec_id == CODEC_ID_H264 || enc->codec_id == CODEC_ID_MPEG4)) {
-            put_avc_eos_tag(pb, flv->last_video_ts);
+            put_avc_eos_tag(pb, sc->last_ts);
         }
     }
 
@@ -389,6 +393,7 @@ static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
     AVIOContext *pb = s->pb;
     AVCodecContext *enc = s->streams[pkt->stream_index]->codec;
     FLVContext *flv = s->priv_data;
+    FLVStreamContext *sc = s->streams[pkt->stream_index]->priv_data;
     unsigned ts;
     int size= pkt->size;
     uint8_t *data= NULL;
@@ -434,19 +439,26 @@ static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
             if (ff_avc_parse_nal_units_buf(pkt->data, &data, &size) < 0)
                 return -1;
         }
-        if (!flv->delay && pkt->dts < 0)
-            flv->delay = -pkt->dts;
     } else if (enc->codec_id == CODEC_ID_AAC && pkt->size > 2 &&
                (AV_RB16(pkt->data) & 0xfff0) == 0xfff0) {
         av_log(s, AV_LOG_ERROR, "malformated aac bitstream, use -absf aac_adtstoasc\n");
         return -1;
     }
+    if (!sc->delay && pkt->dts < 0)
+        sc->delay = -pkt->dts;
 
-    ts = pkt->dts + flv->delay; // add delay to force positive dts
-    if (enc->codec_type == AVMEDIA_TYPE_VIDEO) {
-        if (flv->last_video_ts < ts)
-            flv->last_video_ts = ts;
+    ts = pkt->dts + sc->delay; // add delay to force positive dts
+
+    /* check Speex packet duration */
+    if (enc->codec_id == CODEC_ID_SPEEX && ts - sc->last_ts > 160) {
+        av_log(s, AV_LOG_WARNING, "Warning: Speex stream has more than "
+                                  "8 frames per packet. Adobe Flash "
+                                  "Player cannot handle this!\n");
     }
+
+    if (sc->last_ts < ts)
+        sc->last_ts = ts;
+
     avio_wb24(pb,size + flags_size);
     avio_wb24(pb,ts);
     avio_w8(pb,(ts >> 24) & 0x7F); // timestamps are 32bits _signed_
@@ -469,7 +481,7 @@ static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
     avio_write(pb, data ? data : pkt->data, size);
 
     avio_wb32(pb,size+flags_size+11); // previous tag size
-    flv->duration = FFMAX(flv->duration, pkt->pts + flv->delay + pkt->duration);
+    flv->duration = FFMAX(flv->duration, pkt->pts + sc->delay + pkt->duration);
 
     avio_flush(pb);
 

@@ -101,6 +101,7 @@ void av_register_all(void)
     REGISTER_MUXER    (FRAMEMD5, framemd5);
     REGISTER_MUXDEMUX (G722, g722);
     REGISTER_MUXDEMUX (G723_1, g723_1);
+    REGISTER_DEMUXER  (G729, g729);
     REGISTER_MUXER    (GIF, gif);
     REGISTER_DEMUXER  (GSM, gsm);
     REGISTER_MUXDEMUX (GXF, gxf);
@@ -217,6 +218,7 @@ void av_register_all(void)
     REGISTER_MUXER    (TGP, tgp);
     REGISTER_DEMUXER  (THP, thp);
     REGISTER_DEMUXER  (TIERTEXSEQ, tiertexseq);
+    REGISTER_MUXER    (TIMECODE_V2, timecode_v2);
     REGISTER_DEMUXER  (TMV, tmv);
     REGISTER_MUXDEMUX (TRUEHD, truehd);
     REGISTER_DEMUXER  (TTA, tta);

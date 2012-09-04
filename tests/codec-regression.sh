@@ -250,6 +250,11 @@ do_video_encoding dnxhd-720p-10bit.dnxhd "-s hd720 -b 90M -pix_fmt yuv422p10 -vf
 do_video_decoding "" "-s cif -pix_fmt yuv420p"
 fi
 
+if [ -n "$do_prores" ] ; then
+do_video_encoding prores.mov "-vcodec prores"
+do_video_decoding "" "-pix_fmt yuv420p"
+fi
+
 if [ -n "$do_svq1" ] ; then
 do_video_encoding svq1.mov "-an -vcodec svq1 -qscale 3 -pix_fmt yuv410p"
 do_video_decoding "" "-pix_fmt yuv420p"
@@ -393,6 +398,5 @@ do_audio_enc_dec au  flt pcm_f32be
 do_audio_enc_dec wav flt pcm_f32le
 do_audio_enc_dec au  dbl pcm_f64be
 do_audio_enc_dec wav dbl pcm_f64le
-do_audio_enc_dec wav s16 pcm_zork
 do_audio_enc_dec 302 s16 pcm_s24daud "-ac 6 -ar 96000"
 fi

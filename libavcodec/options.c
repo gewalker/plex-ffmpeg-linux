@@ -201,14 +201,19 @@ static const AVOption options[]={
 {"unofficial", "allow unofficial extensions", 0, AV_OPT_TYPE_CONST, {.dbl = FF_COMPLIANCE_UNOFFICIAL }, INT_MIN, INT_MAX, V|D|E, "strict"},
 {"experimental", "allow non standardized experimental things", 0, AV_OPT_TYPE_CONST, {.dbl = FF_COMPLIANCE_EXPERIMENTAL }, INT_MIN, INT_MAX, V|D|E, "strict"},
 {"b_qoffset", "qp offset between P and B frames", OFFSET(b_quant_offset), AV_OPT_TYPE_FLOAT, {.dbl = 1.25 }, -FLT_MAX, FLT_MAX, V|E},
+#if FF_API_ER
 {"er", "set error detection aggressivity", OFFSET(error_recognition), AV_OPT_TYPE_INT, {.dbl = FF_ER_CAREFUL }, INT_MIN, INT_MAX, A|V|D, "er"},
 {"careful", NULL, 0, AV_OPT_TYPE_CONST, {.dbl = FF_ER_CAREFUL }, INT_MIN, INT_MAX, V|D, "er"},
 {"compliant", NULL, 0, AV_OPT_TYPE_CONST, {.dbl = FF_ER_COMPLIANT }, INT_MIN, INT_MAX, V|D, "er"},
 {"aggressive", NULL, 0, AV_OPT_TYPE_CONST, {.dbl = FF_ER_AGGRESSIVE }, INT_MIN, INT_MAX, V|D, "er"},
-#if FF_API_ER
 {"very_aggressive", NULL, 0, AV_OPT_TYPE_CONST, {.dbl = FF_ER_VERY_AGGRESSIVE }, INT_MIN, INT_MAX, V|D, "er"},
-#endif /* FF_API_ER */
 {"explode", "abort decoding on error recognition", 0, AV_OPT_TYPE_CONST, {.dbl = FF_ER_EXPLODE }, INT_MIN, INT_MAX, V|D, "er"},
+#endif /* FF_API_ER */
+{"err_filter", "set error detection filter flags", OFFSET(err_recognition), AV_OPT_TYPE_FLAGS, {.dbl = AV_EF_CRCCHECK }, INT_MIN, INT_MAX, A|V|D, "err_filter"},
+{"crccheck", NULL, 0, AV_OPT_TYPE_CONST, {.dbl = AV_EF_CRCCHECK }, INT_MIN, INT_MAX, V|D, "err_filter"},
+{"bitstream", NULL, 0, AV_OPT_TYPE_CONST, {.dbl = AV_EF_BITSTREAM }, INT_MIN, INT_MAX, V|D, "err_filter"},
+{"buffer", NULL, 0, AV_OPT_TYPE_CONST, {.dbl = AV_EF_BUFFER }, INT_MIN, INT_MAX, V|D, "err_filter"},
+{"explode", "abort decoding on minor error recognition", 0, AV_OPT_TYPE_CONST, {.dbl = AV_EF_EXPLODE }, INT_MIN, INT_MAX, V|D, "err_filter"},
 {"has_b_frames", NULL, OFFSET(has_b_frames), AV_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX},
 {"block_align", NULL, OFFSET(block_align), AV_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX},
 {"parse_only", NULL, OFFSET(parse_only), AV_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX},
@@ -541,37 +546,41 @@ const AVOption *av_set_string(void *obj, const char *name, const char *val)
     return o;
 }
 
+#if FF_API_ALLOC_CONTEXT
 void avcodec_get_context_defaults2(AVCodecContext *s, enum AVMediaType codec_type){
+    AVCodec c= {0};
+    c.type= codec_type;
+    avcodec_get_context_defaults3(s, &c);
+}
+#endif
+
+int avcodec_get_context_defaults3(AVCodecContext *s, AVCodec *codec){
     int flags=0;
     memset(s, 0, sizeof(AVCodecContext));
 
-    s->av_class= &av_codec_context_class;
+    s->av_class = &av_codec_context_class;
 
-    s->codec_type = codec_type;
-    if(codec_type == AVMEDIA_TYPE_AUDIO)
+    s->codec_type = codec ? codec->type : AVMEDIA_TYPE_UNKNOWN;
+    if(s->codec_type == AVMEDIA_TYPE_AUDIO)
         flags= AV_OPT_FLAG_AUDIO_PARAM;
-    else if(codec_type == AVMEDIA_TYPE_VIDEO)
+    else if(s->codec_type == AVMEDIA_TYPE_VIDEO)
         flags= AV_OPT_FLAG_VIDEO_PARAM;
-    else if(codec_type == AVMEDIA_TYPE_SUBTITLE)
+    else if(s->codec_type == AVMEDIA_TYPE_SUBTITLE)
         flags= AV_OPT_FLAG_SUBTITLE_PARAM;
     av_opt_set_defaults2(s, flags, flags);
 
-    s->time_base= (AVRational){0,1};
-    s->get_buffer= avcodec_default_get_buffer;
-    s->release_buffer= avcodec_default_release_buffer;
-    s->get_format= avcodec_default_get_format;
-    s->execute= avcodec_default_execute;
-    s->execute2= avcodec_default_execute2;
-    s->sample_aspect_ratio= (AVRational){0,1};
-    s->pix_fmt= PIX_FMT_NONE;
-    s->sample_fmt= AV_SAMPLE_FMT_NONE;
+    s->time_base           = (AVRational){0,1};
+    s->get_buffer          = avcodec_default_get_buffer;
+    s->release_buffer      = avcodec_default_release_buffer;
+    s->get_format          = avcodec_default_get_format;
+    s->execute             = avcodec_default_execute;
+    s->execute2            = avcodec_default_execute2;
+    s->sample_aspect_ratio = (AVRational){0,1};
+    s->pix_fmt             = PIX_FMT_NONE;
+    s->sample_fmt          = AV_SAMPLE_FMT_NONE;
 
-    s->reget_buffer= avcodec_default_reget_buffer;
-    s->reordered_opaque= AV_NOPTS_VALUE;
-}
-
-int avcodec_get_context_defaults3(AVCodecContext *s, AVCodec *codec){
-    avcodec_get_context_defaults2(s, codec ? codec->type : AVMEDIA_TYPE_UNKNOWN);
+    s->reget_buffer        = avcodec_default_reget_buffer;
+    s->reordered_opaque    = AV_NOPTS_VALUE;
     if(codec && codec->priv_data_size){
         if(!s->priv_data){
             s->priv_data= av_mallocz(codec->priv_data_size);
@@ -619,13 +628,11 @@ AVCodecContext *avcodec_alloc_context2(enum AVMediaType codec_type){
 
     return avctx;
 }
-#endif
 
 void avcodec_get_context_defaults(AVCodecContext *s){
     avcodec_get_context_defaults2(s, AVMEDIA_TYPE_UNKNOWN);
 }
 
-#if FF_API_ALLOC_CONTEXT
 AVCodecContext *avcodec_alloc_context(void){
     return avcodec_alloc_context2(AVMEDIA_TYPE_UNKNOWN);
 }

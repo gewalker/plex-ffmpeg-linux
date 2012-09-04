@@ -224,7 +224,7 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
 
     pos1 = avio_tell(pb);
 
-    st = av_new_stream(s, 0);
+    st = avformat_new_stream(s, NULL);
     if (!st)
         return AVERROR(ENOMEM);
     av_set_pts_info(st, 32, 1, 1000); /* 32 bit pts in ms */
@@ -569,7 +569,7 @@ static int asf_read_marker(AVFormatContext *s, int64_t size)
         name_len = avio_rl32(pb);  // name length
         if ((ret = avio_get_str16le(pb, name_len * 2, name, sizeof(name))) < name_len)
             avio_skip(pb, name_len - ret);
-        ff_new_chapter(s, i, (AVRational){1, 10000000}, pres_time, AV_NOPTS_VALUE, name );
+        avpriv_new_chapter(s, i, (AVRational){1, 10000000}, pres_time, AV_NOPTS_VALUE, name );
     }
 
     return 0;
@@ -822,6 +822,10 @@ static int asf_read_frame_header(AVFormatContext *s, AVIOContext *pb){
     DO_2BITS(asf->packet_property >> 2, asf->packet_frag_offset, 0);
     DO_2BITS(asf->packet_property, asf->packet_replic_size, 0);
 //printf("key:%d stream:%d seq:%d offset:%d replic_size:%d\n", asf->packet_key_frame, asf->stream_index, asf->packet_seq, //asf->packet_frag_offset, asf->packet_replic_size);
+    if (rsize+asf->packet_replic_size > asf->packet_size_left) {
+        av_log(s, AV_LOG_ERROR, "packet_replic_size %d is invalid\n", asf->packet_replic_size);
+        return -1;
+    }
     if (asf->packet_replic_size >= 8) {
         asf->packet_obj_size = avio_rl32(pb);
         if(asf->packet_obj_size >= (1<<24) || asf->packet_obj_size <= 0){
@@ -854,10 +858,6 @@ static int asf_read_frame_header(AVFormatContext *s, AVIOContext *pb){
         rsize++;
     }else if(asf->packet_replic_size!=0){
         av_log(s, AV_LOG_ERROR, "unexpected packet_replic_size of %d\n", asf->packet_replic_size);
-        return -1;
-    }
-    if (rsize > asf->packet_size_left) {
-        av_log(s, AV_LOG_ERROR, "packet_replic_size is invalid\n");
         return -1;
     }
     if (asf->packet_flags & 0x01) {
@@ -1297,7 +1297,7 @@ static int asf_read_seek(AVFormatContext *s, int stream_index, int64_t pts, int 
         }
     }
     /* no index or seeking by index failed */
-    if(av_seek_frame_binary(s, stream_index, pts, flags)<0)
+    if (ff_seek_frame_binary(s, stream_index, pts, flags) < 0)
         return -1;
     asf_reset_header(s);
     return 0;

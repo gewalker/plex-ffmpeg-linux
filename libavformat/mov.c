@@ -35,6 +35,7 @@
 #include "riff.h"
 #include "isom.h"
 #include "libavcodec/get_bits.h"
+#include "id3v1.h"
 
 #if CONFIG_ZLIB
 #include <zlib.h>
@@ -99,31 +100,48 @@ static int mov_metadata_track_or_disc_number(MOVContext *c, AVIOContext *pb,
     return 0;
 }
 
-static int mov_metadata_int8(MOVContext *c, AVIOContext *pb,
-                             unsigned len, const char *key)
+static int mov_metadata_int8_bypass_padding(MOVContext *c, AVIOContext *pb,
+                                            unsigned len, const char *key)
 {
-  char buf[16];
+    char buf[16];
 
-  /* bypass padding bytes */
-  avio_r8(pb);
-  avio_r8(pb);
-  avio_r8(pb);
+    /* bypass padding bytes */
+    avio_r8(pb);
+    avio_r8(pb);
+    avio_r8(pb);
 
-  snprintf(buf, sizeof(buf), "%hu", avio_r8(pb));
-  av_dict_set(&c->fc->metadata, key, buf, 0);
+    snprintf(buf, sizeof(buf), "%hu", avio_r8(pb));
+    av_dict_set(&c->fc->metadata, key, buf, 0);
 
-  return 0;
+    return 0;
 }
 
-static int mov_metadata_stik(MOVContext *c, AVIOContext *pb,
+static int mov_metadata_int8_no_padding(MOVContext *c, AVIOContext *pb,
+                                        unsigned len, const char *key)
+{
+    char buf[16];
+
+    snprintf(buf, sizeof(buf), "%hu", avio_r8(pb));
+    av_dict_set(&c->fc->metadata, key, buf, 0);
+
+    return 0;
+}
+
+static int mov_metadata_gnre(MOVContext *c, AVIOContext *pb,
                              unsigned len, const char *key)
 {
-  char buf[16];
+    short genre;
+    char buf[20];
 
-  snprintf(buf, sizeof(buf), "%hu", avio_r8(pb));
-  av_dict_set(&c->fc->metadata, key, buf, 0);
+    avio_r8(pb); // unknown
 
-  return 0;
+    genre = avio_r8(pb);
+    if (genre < 1 || genre > ID3v1_GENRE_MAX)
+        return 0;
+    snprintf(buf, sizeof(buf), "%s", ff_id3v1_genre_str[genre-1]);
+    av_dict_set(&c->fc->metadata, key, buf, 0);
+
+    return 0;
 }
 
 static const uint32_t mac_to_unicode[128] = {
@@ -189,6 +207,8 @@ static int mov_read_udta_string(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     case MKTAG(0xa9,'a','l','b'): key = "album";     break;
     case MKTAG(0xa9,'d','a','y'): key = "date";      break;
     case MKTAG(0xa9,'g','e','n'): key = "genre";     break;
+    case MKTAG( 'g','n','r','e'): key = "genre";
+        parse = mov_metadata_gnre; break;
     case MKTAG(0xa9,'t','o','o'):
     case MKTAG(0xa9,'s','w','r'): key = "encoder";   break;
     case MKTAG(0xa9,'e','n','c'): key = "encoder";   break;
@@ -202,11 +222,15 @@ static int mov_read_udta_string(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     case MKTAG( 'd','i','s','k'): key = "disc";
         parse = mov_metadata_track_or_disc_number; break;
     case MKTAG( 't','v','e','s'): key = "episode_sort";
-        parse = mov_metadata_int8; break;
+        parse = mov_metadata_int8_bypass_padding; break;
     case MKTAG( 't','v','s','n'): key = "season_number";
-        parse = mov_metadata_int8; break;
+        parse = mov_metadata_int8_bypass_padding; break;
     case MKTAG( 's','t','i','k'): key = "media_type";
-        parse = mov_metadata_stik; break;
+        parse = mov_metadata_int8_no_padding; break;
+    case MKTAG( 'h','d','v','d'): key = "hd_video";
+        parse = mov_metadata_int8_no_padding; break;
+    case MKTAG( 'p','g','a','p'): key = "gapless_playback";
+        parse = mov_metadata_int8_no_padding; break;
     }
 
     if (c->itunes_metadata && atom.size > 8) {
@@ -289,7 +313,7 @@ static int mov_read_chpl(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
         avio_read(pb, str, str_len);
         str[str_len] = 0;
-        ff_new_chapter(c->fc, i, (AVRational){1,10000000}, start, AV_NOPTS_VALUE, str);
+        avpriv_new_chapter(c->fc, i, (AVRational){1,10000000}, start, AV_NOPTS_VALUE, str);
     }
     return 0;
 }
@@ -472,6 +496,8 @@ static int mov_read_hdlr(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     AVStream *st;
     uint32_t type;
     uint32_t av_unused ctype;
+    int title_size;
+    char *title_str;
 
     if (c->fc->nb_streams < 1) // meta before first trak
         return 0;
@@ -500,6 +526,17 @@ static int mov_read_hdlr(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     avio_rb32(pb); /* component  manufacture */
     avio_rb32(pb); /* component flags */
     avio_rb32(pb); /* component flags mask */
+
+    title_size = atom.size - 24;
+    if (title_size > 0) {
+        title_str = av_malloc(title_size + 1); /* Add null terminator */
+        if (!title_str)
+            return AVERROR(ENOMEM);
+        avio_read(pb, title_str, title_size);
+        title_str[title_size] = 0;
+        av_dict_set(&st->metadata, "handler_name", title_str, 0);
+        av_freep(&title_str);
+    }
 
     return 0;
 }
@@ -1291,7 +1328,7 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
 #if CONFIG_DV_DEMUXER
     case CODEC_ID_DVAUDIO:
         c->dv_fctx = avformat_alloc_context();
-        c->dv_demux = dv_init_demux(c->dv_fctx);
+        c->dv_demux = avpriv_dv_init_demux(c->dv_fctx);
         if (!c->dv_demux) {
             av_log(c->fc, AV_LOG_ERROR, "dv demux context init error\n");
             return -1;
@@ -1539,8 +1576,8 @@ static int mov_read_stts(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     av_dlog(c->fc, "track[%i].stts.entries = %i\n",
             c->fc->nb_streams-1, entries);
 
-    if (!entries || entries >= UINT_MAX / sizeof(*sc->stts_data))
-        return AVERROR(EINVAL);
+    if (entries >= UINT_MAX / sizeof(*sc->stts_data))
+        return -1;
 
     sc->stts_data = av_malloc(entries * sizeof(*sc->stts_data));
     if (!sc->stts_data)
@@ -1627,9 +1664,10 @@ static void mov_build_index(MOVContext *mov, AVStream *st)
     uint64_t stream_size = 0;
 
     /* adjust first dts according to edit list */
-    if (sc->time_offset && mov->time_scale > 0) {
-        if (sc->time_offset < 0)
-            sc->time_offset = av_rescale(sc->time_offset, sc->time_scale, mov->time_scale);
+    if ((sc->empty_duration || sc->start_time) && mov->time_scale > 0) {
+        if (sc->empty_duration)
+            sc->empty_duration = av_rescale(sc->empty_duration, sc->time_scale, mov->time_scale);
+        sc->time_offset = sc->start_time - sc->empty_duration;
         current_dts = -sc->time_offset;
         if (sc->ctts_data && sc->stts_data &&
             sc->ctts_data[0].duration / FFMAX(sc->stts_data[0].duration, 1) > 16) {
@@ -1843,8 +1881,9 @@ static int mov_read_trak(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     MOVStreamContext *sc;
     int ret;
 
-    st = av_new_stream(c->fc, c->fc->nb_streams);
+    st = avformat_new_stream(c->fc, NULL);
     if (!st) return AVERROR(ENOMEM);
+    st->id = c->fc->nb_streams;
     sc = av_mallocz(sizeof(MOVStreamContext));
     if (!sc) return AVERROR(ENOMEM);
 
@@ -2272,7 +2311,7 @@ free_and_return:
 static int mov_read_elst(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 {
     MOVStreamContext *sc;
-    int i, edit_count, version;
+    int i, edit_count, version, edit_start_index = 0;
 
     if (c->fc->nb_streams < 1)
         return 0;
@@ -2296,9 +2335,11 @@ static int mov_read_elst(MOVContext *c, AVIOContext *pb, MOVAtom atom)
             time     = (int32_t)avio_rb32(pb); /* media time */
         }
         avio_rb32(pb); /* Media rate */
-        if (i == 0 && time >= -1) {
-            sc->time_offset = time != -1 ? time : -duration;
-        }
+        if (i == 0 && time == -1) {
+            sc->empty_duration = duration;
+            edit_start_index = 1;
+        } else if (i == edit_start_index && time >= 0)
+            sc->start_time = time;
     }
 
     if (edit_count > 1)
@@ -2483,7 +2524,7 @@ static void mov_read_chapters(AVFormatContext *s)
             }
         }
 
-        ff_new_chapter(s, i, st->time_base, sample->timestamp, end, title);
+        avpriv_new_chapter(s, i, st->time_base, sample->timestamp, end, title);
         av_freep(&title);
     }
 finish:
@@ -2591,10 +2632,10 @@ static int mov_read_packet(AVFormatContext *s, AVPacket *pkt)
         }
 #if CONFIG_DV_DEMUXER
         if (mov->dv_demux && sc->dv_audio_container) {
-            dv_produce_packet(mov->dv_demux, pkt, pkt->data, pkt->size, pkt->pos);
+            avpriv_dv_produce_packet(mov->dv_demux, pkt, pkt->data, pkt->size, pkt->pos);
             av_free(pkt->data);
             pkt->size = 0;
-            ret = dv_get_packet(mov->dv_demux, pkt);
+            ret = avpriv_dv_get_packet(mov->dv_demux, pkt);
             if (ret < 0)
                 return ret;
         }

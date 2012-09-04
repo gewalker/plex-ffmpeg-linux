@@ -127,7 +127,7 @@ static int request_frame(AVFilterLink *outlink)
     TestSourceContext *test = outlink->src->priv;
     AVFilterBufferRef *picref;
 
-    if (test->max_pts >= 0 && test->pts > test->max_pts)
+    if (test->max_pts >= 0 && test->pts >= test->max_pts)
         return AVERROR_EOF;
     picref = avfilter_get_video_buffer(outlink, AV_PERM_WRITE,
                                        test->w, test->h);
@@ -137,8 +137,8 @@ static int request_frame(AVFilterLink *outlink)
     picref->video->interlaced = 0;
     picref->video->pict_type = AV_PICTURE_TYPE_I;
     picref->video->sample_aspect_ratio = test->sar;
-    test->nb_frame++;
     test->fill_picture_fn(outlink->src, picref);
+    test->nb_frame++;
 
     avfilter_start_frame(outlink, avfilter_ref_buffer(picref, ~0));
     avfilter_draw_slice(outlink, 0, picref->video->h, 1);
@@ -148,6 +148,46 @@ static int request_frame(AVFilterLink *outlink)
     return 0;
 }
 
+#if CONFIG_NULLSRC_FILTER
+
+static const char *nullsrc_get_name(void *ctx)
+{
+    return "nullsrc";
+}
+
+static const AVClass nullsrc_class = {
+    .class_name = "NullSourceContext",
+    .item_name  = nullsrc_get_name,
+    .option     = testsrc_options,
+};
+
+static void nullsrc_fill_picture(AVFilterContext *ctx, AVFilterBufferRef *picref) { }
+
+static av_cold int nullsrc_init(AVFilterContext *ctx, const char *args, void *opaque)
+{
+    TestSourceContext *test = ctx->priv;
+
+    test->class = &nullsrc_class;
+    test->fill_picture_fn = nullsrc_fill_picture;
+    return init(ctx, args, opaque);
+}
+
+AVFilter avfilter_vsrc_nullsrc = {
+    .name        = "nullsrc",
+    .description = NULL_IF_CONFIG_SMALL("Null video source, return unprocessed video frames."),
+    .init       = nullsrc_init,
+    .priv_size  = sizeof(TestSourceContext),
+
+    .inputs    = (AVFilterPad[]) {{ .name = NULL}},
+    .outputs   = (AVFilterPad[]) {{ .name = "default",
+                                    .type = AVMEDIA_TYPE_VIDEO,
+                                    .request_frame = request_frame,
+                                    .config_props  = config_props, },
+                                  { .name = NULL}},
+};
+
+#endif /* CONFIG_NULLSRC_FILTER */
+
 #if CONFIG_TESTSRC_FILTER
 
 static const char *testsrc_get_name(void *ctx)
@@ -156,9 +196,9 @@ static const char *testsrc_get_name(void *ctx)
 }
 
 static const AVClass testsrc_class = {
-    "TestSourceContext",
-    testsrc_get_name,
-    testsrc_options
+    .class_name = "TestSourceContext",
+    .item_name  = testsrc_get_name,
+    .option     = testsrc_options,
 };
 
 /**
@@ -283,7 +323,7 @@ static void test_fill_picture(AVFilterContext *ctx, AVFilterBufferRef *picref)
     }
 
     /* draw sliding color line */
-    p = data + picref->linesize[0] * height * 3/4;
+    p0 = p = data + picref->linesize[0] * height * 3/4;
     grad = (256 * test->nb_frame * test->time_base.num / test->time_base.den) %
         GRADIENT_SIZE;
     rgrad = 0;
@@ -311,8 +351,9 @@ static void test_fill_picture(AVFilterContext *ctx, AVFilterBufferRef *picref)
         if (grad >= GRADIENT_SIZE)
             grad -= GRADIENT_SIZE;
     }
+    p = p0;
     for (y = height / 8; y > 0; y--) {
-        memcpy(p, p - picref->linesize[0], 3 * width);
+        memcpy(p+picref->linesize[0], p, 3 * width);
         p += picref->linesize[0];
     }
 
@@ -378,9 +419,9 @@ static const char *rgbtestsrc_get_name(void *ctx)
 }
 
 static const AVClass rgbtestsrc_class = {
-    "RGBTestSourceContext",
-    rgbtestsrc_get_name,
-    testsrc_options
+    .class_name = "RGBTestSourceContext",
+    .item_name  = rgbtestsrc_get_name,
+    .option     = testsrc_options,
 };
 
 #define R 0

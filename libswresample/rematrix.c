@@ -25,16 +25,19 @@
 #define ONE (1.0)
 #define R(x) x
 #define SAMPLE float
+#define COEFF float
 #define RENAME(x) x ## _float
 #include "rematrix_template.c"
 #undef SAMPLE
 #undef RENAME
 #undef R
 #undef ONE
+#undef COEFF
 
 #define ONE (-32768)
 #define R(x) (((x) + 16384)>>15)
 #define SAMPLE int16_t
+#define COEFF int
 #define RENAME(x) x ## _s16
 #include "rematrix_template.c"
 
@@ -194,7 +197,7 @@ int swr_rematrix_init(SwrContext *s){
         int ch_in=0;
         for(j=0; j<64; j++){
             s->matrix[out_i][in_i]= matrix[i][j];
-            s->matrix16[out_i][in_i]= lrintf(matrix[i][j] * 32768);
+            s->matrix32[out_i][in_i]= lrintf(matrix[i][j] * 32768);
             if(matrix[i][j]){
                 s->matrix_ch[out_i][++ch_in]= in_i;
                 sum += fabs(matrix[i][j]);
@@ -207,14 +210,26 @@ int swr_rematrix_init(SwrContext *s){
         if(s->out_ch_layout & (1ULL<<i))
             out_i++;
     }
+    if(s->rematrix_volume  < 0)
+        maxcoef = -s->rematrix_volume;
+
     if((   s->out_sample_fmt < AV_SAMPLE_FMT_FLT
         || s->int_sample_fmt < AV_SAMPLE_FMT_FLT) && maxcoef > 1.0){
         for(i=0; i<SWR_CH_MAX; i++)
             for(j=0; j<SWR_CH_MAX; j++){
                 s->matrix[i][j] /= maxcoef;
-                s->matrix16[i][j]= lrintf(s->matrix[i][j] * 32768);
+                s->matrix32[i][j]= lrintf(s->matrix[i][j] * 32768);
             }
     }
+
+    if(s->rematrix_volume > 0){
+        for(i=0; i<SWR_CH_MAX; i++)
+            for(j=0; j<SWR_CH_MAX; j++){
+                s->matrix[i][j] *= s->rematrix_volume;
+                s->matrix32[i][j]= lrintf(s->matrix[i][j] * 32768);
+            }
+    }
+
     for(i=0; i<av_get_channel_layout_nb_channels(s->out_ch_layout); i++){
         for(j=0; j<av_get_channel_layout_nb_channels(s->in_ch_layout); j++){
             av_log(NULL, AV_LOG_DEBUG, "%f ", s->matrix[i][j]);
@@ -236,21 +251,21 @@ int swr_rematrix(SwrContext *s, AudioData *out, AudioData *in, int len, int must
             in_i= s->matrix_ch[out_i][1];
             if(mustcopy || s->matrix[out_i][in_i]!=1.0){
                 if(s->int_sample_fmt == AV_SAMPLE_FMT_FLT){
-                    copy_float(out->ch[out_i], in->ch[in_i], s->matrix[out_i][in_i], len);
+                    copy_float((float  *)out->ch[out_i], (const float  *)in->ch[in_i], s->matrix  [out_i][in_i], len);
                 }else
-                    copy_s16  (out->ch[out_i], in->ch[in_i], s->matrix16[out_i][in_i], len);
+                    copy_s16  ((int16_t*)out->ch[out_i], (const int16_t*)in->ch[in_i], s->matrix32[out_i][in_i], len);
             }else{
                 out->ch[out_i]= in->ch[in_i];
             }
             break;
         case 2:
             if(s->int_sample_fmt == AV_SAMPLE_FMT_FLT){
-                sum2_float(out->ch[out_i], in->ch[ s->matrix_ch[out_i][1] ],           in->ch[ s->matrix_ch[out_i][2] ],
+                sum2_float((float  *)out->ch[out_i], (const float  *)in->ch[ s->matrix_ch[out_i][1] ],           (const float  *)in->ch[ s->matrix_ch[out_i][2] ],
                                  s->matrix[out_i][ s->matrix_ch[out_i][1] ], s->matrix[out_i][ s->matrix_ch[out_i][2] ],
                            len);
             }else{
-                sum2_s16  (out->ch[out_i], in->ch[ s->matrix_ch[out_i][1] ],           in->ch[ s->matrix_ch[out_i][2] ],
-                                 s->matrix16[out_i][ s->matrix_ch[out_i][1] ], s->matrix16[out_i][ s->matrix_ch[out_i][2] ],
+                sum2_s16  ((int16_t*)out->ch[out_i], (const int16_t*)in->ch[ s->matrix_ch[out_i][1] ],           (const int16_t*)in->ch[ s->matrix_ch[out_i][2] ],
+                                 s->matrix32[out_i][ s->matrix_ch[out_i][1] ], s->matrix32[out_i][ s->matrix_ch[out_i][2] ],
                            len);
             }
             break;
@@ -269,7 +284,7 @@ int swr_rematrix(SwrContext *s, AudioData *out, AudioData *in, int len, int must
                     int v=0;
                     for(j=0; j<s->matrix_ch[out_i][0]; j++){
                         in_i= s->matrix_ch[out_i][1+j];
-                        v+= ((int16_t*)in->ch[in_i])[i] * s->matrix16[out_i][in_i];
+                        v+= ((int16_t*)in->ch[in_i])[i] * s->matrix32[out_i][in_i];
                     }
                     ((int16_t*)out->ch[out_i])[i]= (v + 16384)>>15;
                 }

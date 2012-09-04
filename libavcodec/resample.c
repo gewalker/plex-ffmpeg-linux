@@ -265,7 +265,6 @@ ReSampleContext *av_audio_resample_init(int output_channels, int input_channels,
         }
     }
 
-#define TAPS 16
     s->resample_context = av_resample_init(output_rate, input_rate,
                                            filter_length, log2_phase_count,
                                            linear, cutoff);
@@ -326,9 +325,9 @@ int audio_resample(ReSampleContext *s, short *output, short *input, int nb_sampl
     if (s->sample_fmt[1] != AV_SAMPLE_FMT_S16) {
         output_bak = output;
 
-        if (!s->buffer_size[1] || s->buffer_size[1] < lenout) {
+        if (!s->buffer_size[1] || s->buffer_size[1] < 2*lenout) {
             av_free(s->buffer[1]);
-            s->buffer_size[1] = lenout;
+            s->buffer_size[1] = 2*lenout;
             s->buffer[1] = av_malloc(s->buffer_size[1]);
             if (!s->buffer[1]) {
                 av_log(s->resample_context, AV_LOG_ERROR, "Could not allocate buffer\n");

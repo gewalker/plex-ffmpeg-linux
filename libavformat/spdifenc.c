@@ -220,7 +220,10 @@ static int spdif_header_dts4(AVFormatContext *s, AVPacket *pkt, int core_size,
     }
 
     ctx->out_bytes   = sizeof(dtshd_start_code) + 2 + pkt_size;
-    ctx->length_code = ctx->out_bytes;
+
+    /* Align so that (length_code & 0xf) == 0x8. This is reportedly needed
+     * with some receivers, but the exact requirement is unconfirmed. */
+    ctx->length_code = FFALIGN(ctx->out_bytes + 0x8, 0x10) - 0x8;
 
     av_fast_malloc(&ctx->hd_buf, &ctx->hd_buf_size, ctx->out_bytes);
     if (!ctx->hd_buf)
@@ -349,7 +352,7 @@ static int spdif_header_aac(AVFormatContext *s, AVPacket *pkt)
     int ret;
 
     init_get_bits(&gbc, pkt->data, AAC_ADTS_HEADER_SIZE * 8);
-    ret = ff_aac_parse_header(&gbc, &hdr);
+    ret = avpriv_aac_parse_header(&gbc, &hdr);
     if (ret < 0) {
         av_log(s, AV_LOG_ERROR, "Wrong AAC file format\n");
         return AVERROR_INVALIDDATA;
